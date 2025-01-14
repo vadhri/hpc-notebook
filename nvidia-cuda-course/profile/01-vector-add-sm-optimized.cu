@@ -5,10 +5,14 @@
  * simply initializes each element to equal its index in the
  * vector.
  */
-
+__global__
 void initWith(float num, float *a, int N)
 {
-  for(int i = 0; i < N; ++i)
+
+  int index = threadIdx.x + blockIdx.x * blockDim.x;
+  int stride = blockDim.x * gridDim.x;
+
+  for(int i = index; i < N; i += stride)
   {
     a[i] = num;
   }
@@ -59,6 +63,7 @@ int main(int argc, char **argv)
   cudaDeviceGetAttribute(&numberOfSMs, cudaDevAttrMultiProcessorCount, deviceId);
   printf("Device ID: %d\tNumber of SMs: %d\n", deviceId, numberOfSMs);
 
+
   float *a;
   float *b;
   float *c;
@@ -67,15 +72,16 @@ int main(int argc, char **argv)
   cudaMallocManaged(&b, size);
   cudaMallocManaged(&c, size);
 
-  initWith(3, a, N);
-  initWith(4, b, N);
-  initWith(0, c, N);
+  cudaMemPrefetchAsync(a, size, deviceId);
+  cudaMemPrefetchAsync(b, size, deviceId);
+  cudaMemPrefetchAsync(c, size, deviceId);
+
 
   size_t threadsPerBlock;
   size_t numberOfBlocks;
 
   if (argc == 3) {
-     numberOfBlocks = std::stoi(argv[1]);
+     numberOfBlocks = std::stoi(argv[1]) * numberOfSMs;
      threadsPerBlock = std::stoi(argv[2]);
 
   } else {
@@ -83,8 +89,13 @@ int main(int argc, char **argv)
      numberOfBlocks = 1;
   }
 
+
   cudaError_t addVectorsErr;
   cudaError_t asyncErr;
+
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(3, a, N);
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(4, b, N);
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(0, c, N);
 
   addVectorsInto<<<numberOfBlocks, threadsPerBlock>>>(c, a, b, N);
 
@@ -92,6 +103,8 @@ int main(int argc, char **argv)
   if(addVectorsErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(addVectorsErr));
 
   asyncErr = cudaDeviceSynchronize();
+  cudaMemPrefetchAsync(c, size, cudaCpuDeviceId);
+
   if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
 
   checkElementsAre(7, c, N);
